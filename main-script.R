@@ -6,6 +6,7 @@ require(ggthemes)
 index <- read_csv('https://storage.googleapis.com/covid19-open-data/v2/index.csv')
 epi <- read_csv('https://storage.googleapis.com/covid19-open-data/v2/epidemiology.csv')
 gov <- read_csv('https://storage.googleapis.com/covid19-open-data/v2/oxford-government-response.csv')
+mov <- read_csv('https://storage.googleapis.com/covid19-open-data/v2/mobility.csv')
 
 ### Filter data to just US states
 
@@ -30,6 +31,9 @@ gov_state <- filter(gov, key %in% state_keys) %>%
              public_information_campaigns
          )
     )
+
+mov_state <- mov %>%
+    filter(key %in% state_keys)
 
 ## plot epidemic by state
 epi_state %>%
@@ -80,9 +84,52 @@ dat_lm <- gov_state %>%
 lm <- lm(pos_rate ~ . - date - key, data = dat_lm)
 summary(lm)
 
+### Discrete response: new case rate ~ movement
+
+## create response
+dir <- epi_state %>%
+    group_by(key) %>%
+    transmute(
+        date, key,
+        sev_day = rollmean(new_confirmed, 7, NA),
+        dir = rollapplyr(
+            sev_day,
+            width = 2,
+            FUN = function(x) ifelse(x[1] <= x[2], 1, 0),
+            fill = NA
+        )
+    ) %>%
+    drop_na
+
+## check it worked
+dir %>%
+    filter(date >= as.Date('2020-12-01'), key %in% c('US_NY', 'US_CA', 'US_NC')) %>%
+    ggplot(aes(date, log(sev_day), col = dir)) +
+    geom_point() +
+    geom_line(col = 'grey20', alpha = .6) +
+    facet_wrap(~key, scales = 'free_y', nrow = 3)
+
+## join with predictors
+dat_disc <- mov_state %>%
+    inner_join(dir, by = c('date', 'key')) %>%
+    filter(
+        date >= as.Date('2020-6-01'), # change dates of interest here
+        date < as.Date('2021-1-31')
+    )
+
+glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = dat_disc)
+
+dat_disc_pred <- mov_state %>%
+    inner_join(dir, by = c('date', 'key')) %>%
+    filter(date >= as.Date('2021-1-31'))
+
+prob_glm <- predict(glm, newdata = dat_disc_pred)
+pred_glm <- ifelse(prob_glm < 0.5, 0, 1)
+table(pred_glm, dat_disc_pred$dir)
+
 ### Old code for at the county level (not used)
 
-ocounty_keys <- index %>%
+county_keys <- index %>%
     filter(country_code == 'US', aggregation_level == 2) %>%
     pull(key)
 
