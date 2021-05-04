@@ -65,11 +65,15 @@ epi_state %>%
 rate <- epi_state %>%
     transmute(date, key, pos_rate = new_confirmed / new_tested)
 
-dat_lm <- gov_state %>%
-    inner_join(rate, by = c('date', 'key')) %>%
+dat_cont <- gov_state %>%
+    inner_join(rate, by = c('date', 'key'))
+
+## filter and save training set
+train_cont <- dat_cont %>%
     filter(
-        date >= as.Date('2020-6-01')
-    ) %>% # change dates of interest here
+        date >= as.Date('2020-6-01'), # change dates of interest here
+        date < as.Date('2021-1-31')
+    ) %>%
     select_if(~length(unique(.x)) > 1) %>%
     mutate_at(
         vars(
@@ -81,8 +85,25 @@ dat_lm <- gov_state %>%
         as.factor
     )
 
-lm <- lm(pos_rate ~ . - date - key, data = dat_lm)
-summary(lm)
+write_csv(train_cont, 'cont-train.csv')
+
+## filter and save test set
+test_cont <- dat_cont %>%
+    filter(
+        date >= as.Date('2021-1-31')
+    ) %>%
+    select_if(~length(unique(.x)) > 1) %>%
+    mutate_at(
+        vars(
+            school_closing:restrictions_on_internal_movement,
+            debt_relief,
+            testing_policy:contact_tracing,
+            facial_coverings:vaccination_policy
+        ),
+        as.factor
+    )
+
+write_csv(test_cont, 'cont-test.csv')
 
 ### Discrete response: new case rate ~ movement
 
@@ -111,21 +132,29 @@ dir %>%
 
 ## join with predictors
 dat_disc <- mov_state %>%
-    inner_join(dir, by = c('date', 'key')) %>%
-    filter(
-        date >= as.Date('2020-6-01'), # change dates of interest here
-        date < as.Date('2021-1-31')
-    )
+    inner_join(dir, by = c('date', 'key'))
 
-glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = dat_disc)
+## save traning and test sets
+train_disc <- filter(
+    dat_disc,
+    date >= as.Date('2020-6-01'), # change dates of interest here
+    date < as.Date('2021-1-31')
+)
 
-dat_disc_pred <- mov_state %>%
-    inner_join(dir, by = c('date', 'key')) %>%
-    filter(date >= as.Date('2021-1-31'))
+write_csv(train_disc, 'disc-train.csv')
 
-prob_glm <- predict(glm, newdata = dat_disc_pred)
+test_disc <- filter(
+    dat_disc,
+    date >= as.Date('2021-1-31')
+)
+
+write_csv(test_disc, 'disc-test.csv')
+
+## ex: fit a glm
+glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = train_disc)
+prob_glm <- predict(glm, newdata = test_disc)
 pred_glm <- ifelse(prob_glm < 0.5, 0, 1)
-table(pred_glm, dat_disc_pred$dir)
+table(pred_glm, test_disc$dir)
 
 ### Old code for at the county level (not used)
 
