@@ -2,7 +2,7 @@ require(tidyverse)
 require(zoo)
 require(ggthemes)
 
-setwd("C:/Users/lafla/Downloads/stat-learning-final-master")
+setwd("C:/Users/lafla/Downloads/stat-learning-final-master (1)/stat-learning-final-master")
 
 cont_train = read.csv("cont-train.csv")
 cont_test = read.csv("cont-test.csv")
@@ -78,4 +78,24 @@ importance(tree.rf)
 
 ##Classification Trees----------------------------------------------------------
 
+#full tree
+disc_train$dir = factor(disc_train$dir)
+disc_test$dir = factor(disc_test$dir)
+tree.fit = tree(dir~. -date - key, data=disc_train)
+summary(tree.fit)
+plot(tree.fit)
+tree.pred = predict(tree.fit, disc_train)
+tree.res = ifelse(tree.pred<0.5, 0, 1)
+table(tree.res, disc_test$dir)
 
+#random Forest
+set.seed(1)
+tree.rf = randomForest(dir~. -date - key, data=disc_train, mtry = 3, importance = TRUE)
+rf.pred = predict(tree.rf, disc_test)
+rf.res = ifelse(rf.pred < 0.5, 0, 1)
+table(rf.res, disc_test$dir)
+
+glm.fit = glm(dir~., data = disc_train[,!colnames(disc_train) %in% c("date", "key")], family = binomial)
+glm.prob = predict(glm.fit, disc_test)
+glm.pred <- ifelse(glm.prob < 0.5, 0, 1)
+table(glm.pred, disc_test$dir)
