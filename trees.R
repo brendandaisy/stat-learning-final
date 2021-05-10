@@ -4,7 +4,17 @@ require(ggthemes)
 
 setwd("C:/Users/lafla/Downloads/stat-learning-final-master")
 
-cont_train = read.csv("cont-train.csv")
+cont_train = read_csv("cont-train.csv") %>%
+    mutate_at(
+        vars(
+            school_closing:restrictions_on_internal_movement,
+            debt_relief,
+            testing_policy:contact_tracing,
+            facial_coverings
+        ),
+        as.factor
+    )
+
 cont_test = read.csv("cont-test.csv")
 
 disc_train = read.csv("disc-train.csv")

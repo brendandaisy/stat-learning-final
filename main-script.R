@@ -23,14 +23,22 @@ epi_state <- filter(
 )
 
 gov_state <- filter(gov, key %in% state_keys) %>%
-    select(-stringency_index) %>%
-    select( # remove these for now because they were causing model issues
-        -c(
-             international_travel_controls,
-             international_support,
-             public_information_campaigns
-         )
-    )
+    select(-stringency_index)
+
+## inspect for factors with poor info
+gov_state %>%
+    select(-date, -key) %>%
+    map(table, useNA = 'ifany')
+
+## remove some vars based on above
+gov_state <- gov_state %>%
+    select(-c(
+                international_support,
+                fiscal_measures,
+                emergency_investment_in_healthcare,
+                investment_in_vaccines,
+                vaccination_policy
+            ))
 
 mov_state <- mov %>%
     filter(key %in% state_keys)
@@ -66,44 +74,12 @@ rate <- epi_state %>%
     transmute(date, key, pos_rate = new_confirmed / new_tested)
 
 dat_cont <- gov_state %>%
-    inner_join(rate, by = c('date', 'key'))
+    inner_join(rate, by = c('date', 'key')) %>%
+    drop_na %>% # remove remaining few NAs
+    mutate_at(vars(-date, -key), as.factor) %>%
+    select_if(~length(unique(.x)) > 1) # just being extra careful
 
-## filter and save training set
-train_cont <- dat_cont %>%
-    filter(
-        date >= as.Date('2020-6-01'), # change dates of interest here
-        date < as.Date('2021-1-31')
-    ) %>%
-    select_if(~length(unique(.x)) > 1) %>%
-    mutate_at(
-        vars(
-            school_closing:restrictions_on_internal_movement,
-            debt_relief,
-            testing_policy:contact_tracing,
-            facial_coverings:vaccination_policy
-        ),
-        as.factor
-    )
-
-write_csv(train_cont, 'cont-train.csv')
-
-## filter and save test set
-test_cont <- dat_cont %>%
-    filter(
-        date >= as.Date('2021-1-31')
-    ) %>%
-    select_if(~length(unique(.x)) > 1) %>%
-    mutate_at(
-        vars(
-            school_closing:restrictions_on_internal_movement,
-            debt_relief,
-            testing_policy:contact_tracing,
-            facial_coverings:vaccination_policy
-        ),
-        as.factor
-    )
-
-write_csv(test_cont, 'cont-test.csv')
+write_csv(dat_cont, 'cont-response-may10.csv')
 
 ### Discrete response: new case rate ~ movement
 
@@ -124,7 +100,8 @@ dir <- epi_state %>%
 
 ## check it worked
 dir %>%
-    filter(date >= as.Date('2020-12-01'), key %in% c('US_NY', 'US_CA', 'US_NC')) %>%
+    filter(date >= as.Date('2020-6-01'), # change dates of interest here
+    date < as.Date('2021-1-31'), key %in% c('US_NY', 'US_CA', 'US_NC')) %>%
     ggplot(aes(date, log(sev_day), col = dir)) +
     geom_point() +
     geom_line(col = 'grey20', alpha = .6) +
@@ -139,16 +116,18 @@ train_disc <- filter(
     dat_disc,
     date >= as.Date('2020-6-01'), # change dates of interest here
     date < as.Date('2021-1-31')
-)
+) %>%
+    drop_na
 
-write_csv(train_disc, 'disc-train.csv')
+write_csv(train_disc, 'disc-train-may10.csv')
 
 test_disc <- filter(
     dat_disc,
     date >= as.Date('2021-1-31')
-)
+) %>%
+    drop_na
 
-write_csv(test_disc, 'disc-test.csv')
+write_csv(test_disc, 'disc-test-may10.csv')
 
 ## ex: fit a glm
 glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = train_disc)
