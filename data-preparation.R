@@ -1,6 +1,7 @@
 require(tidyverse)
 require(zoo)
 require(ggthemes)
+require(car)
 
 ### Read in the data (may take a min)
 index <- read_csv('https://storage.googleapis.com/covid19-open-data/v2/index.csv')
@@ -71,13 +72,31 @@ epi_state %>%
 ### Continuous reponse: pos_rate ~ gov_response
 
 rate <- epi_state %>%
-    transmute(date, key, pos_rate = new_confirmed / new_tested)
+    transmute(date, key, pos_rate = 100 * new_confirmed / new_tested) %>%
+    filter(pos_rate < 100)
 
 dat_cont <- gov_state %>%
     inner_join(rate, by = c('date', 'key')) %>%
     drop_na %>% # remove remaining few NAs
-    mutate_at(vars(-date, -key), as.factor) %>%
+    mutate_at(vars(-date, -key, -pos_rate), as.factor) %>%
     select_if(~length(unique(.x)) > 1) # just being extra careful
+
+## find a nice looking transformation
+ggplot(dat_cont, aes(log(pos_rate))) +
+    geom_histogram(bins=25) +
+    theme_few() +
+    labs(x = 'Log percent positive cases', y = '')
+
+## VIF: are we ok using all predictors throughout?
+lm.fit = lm(log(pos_rate) ~. - date - key, data = dat_cont)
+summary(lm.fit)
+vif(lm.fit)
+
+## remove collinearity (and fit above model again)
+dat_cont <- select(dat_cont, -school_closing, -cancel_public_events)
+
+## inspect residuals
+plot(lm.fit)
 
 write_csv(dat_cont, 'cont-response-may10.csv')
 
@@ -102,99 +121,22 @@ dir <- epi_state %>%
 dir %>%
     filter(date >= as.Date('2020-6-01'), # change dates of interest here
     date < as.Date('2021-1-31'), key %in% c('US_NY', 'US_CA', 'US_NC')) %>%
-    ggplot(aes(date, log(sev_day), col = dir)) +
+    ggplot(aes(date, log(sev_day), col = ifelse(dir == 0, 'Down', 'Up'))) +
     geom_point() +
     geom_line(col = 'grey20', alpha = .6) +
-    facet_wrap(~key, scales = 'free_y', nrow = 3)
+    facet_wrap(~key, scales = 'free_y', nrow = 3) +
+    labs(x = 'Date', y = 'Log seven-day-average', col = 'Direction') +
+    theme_few()
 
 ## join with predictors
 dat_disc <- mov_state %>%
-    inner_join(dir, by = c('date', 'key'))
-
-## save traning and test sets
-train_disc <- filter(
-    dat_disc,
-    date >= as.Date('2020-6-01'), # change dates of interest here
-    date < as.Date('2021-1-31')
-) %>%
+    inner_join(dir, by = c('date', 'key')) %>%
     drop_na
 
-write_csv(train_disc, 'disc-train-may10.csv')
+## VIF
+glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = dat_disc)
+vif(glm)
 
-test_disc <- filter(
-    dat_disc,
-    date >= as.Date('2021-1-31')
-) %>%
-    drop_na
+dat_disc <- select(dat_disc, -mobility_residential)
 
-write_csv(test_disc, 'disc-test-may10.csv')
-
-## ex: fit a glm
-glm <- glm(dir ~ . - sev_day - key - date, family = binomial, data = train_disc)
-prob_glm <- predict(glm, newdata = test_disc)
-pred_glm <- ifelse(prob_glm < 0.5, 0, 1)
-table(pred_glm, test_disc$dir)
-
-### Old code for at the county level (not used)
-
-county_keys <- index %>%
-    filter(country_code == 'US', aggregation_level == 2) %>%
-    pull(key)
-
-epi_us_county <- filter(epi, key %in% county_keys) %>%
-    drop_na(new_tested, new_confirmed) %>%
-    filter(new_tested > 0, new_confirmed > 0)
-
-epi_us_county %>%
-    filter(
-        date >= as.Date('2020-02-01'),
-        date <= as.Date('2020-04-01'),
-        str_detect(key, 'OR')
-    ) %>%
-    ggplot(aes(date, new_confirmed, col = key)) +
-    geom_point() +
-    geom_line() +
-    theme(legend.position = 'none')
-
-epi_us_county %>%
-    ggplot(aes(new_tested)) +
-    geom_density()
-
-subc <- sample(unique(epi_us_county$key), 50)
-
-epi_us_county %>%
-    filter(date >= as.Date('2020-12-01'), key %in% subc) %>%
-    ggplot(aes(date, log(new_tested), col = key)) +
-    geom_line(alpha = .7) +
-    theme_few() +
-    theme(legend.position = 'none')
-
-dat <- epi_us_county %>%
-    mutate(
-        new_negative = map2_dbl(new_tested, new_confirmed, ~max(.x - .y, 0)),
-        nc3 = rollmean(new_confirmed, 3, fill = NA),
-        nc7 = rollmean(new_confirmed, 7, fill = NA)
-    )
-
-dat %>%
-    filter(
-        date >= as.Date('2021-01-01'),
-        date <= as.Date('2021-04-01')
-    ) %>%
-    ggplot(aes(date, nc7, col = key)) +
-    geom_point() +
-    geom_line() +
-    theme(legend.position = 'none')
-
-ggplot(dat, aes(log(new_tested), log(new_confirmed), col = key)) +
-    geom_point() +
-    theme(legend.position = 'none')
-
-fit <- glm(
-    cbind(new_confirmed, new_negative) ~ date,
-    family = binomial(),
-    data = dat
-)
-
-fit2 <- lm(new_confirmed ~ new_tested, data = dat)
-
+write_csv(dat_disc, 'disc-response-may10.csv')
